@@ -56,6 +56,22 @@
       width: 50%;
       height: 120dp;   /* intentionally taller — clipped by rounded boundary */
     }
+    /* Gradient swatches */
+    .grad-row { margin-bottom: 10dp; }
+    .swatch {
+      height: 40dp;
+      border-radius: 6dp;
+      width: 100%;
+    }
+    .grad-label {
+      font-size: 13dp;
+      color: #8899aa;
+      margin-bottom: 4dp;
+    }
+    .swatch-linear   { decorator: linear-gradient(to right, #e94560, #0f3460); }
+    .swatch-radial   { decorator: radial-gradient(#ffe066, #e94560, #1a1a2e); }
+    .swatch-conic    { decorator: conic-gradient(#e94560, #ffe066, #4caf50, #0f3460, #e94560); }
+    .swatch-rep      { decorator: repeating-linear-gradient(45deg, #e94560, #e94560 8dp, #1a1a2e 8dp, #1a1a2e 16dp); }
     .tag {
       font-size: 13dp;
       color: #aabbcc;
@@ -90,6 +106,26 @@
     <p class="card-title">STENCIL CLIP MASK</p>
     <div class="clip-box">
       <div class="clip-inner"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <p class="card-title">GRADIENTS</p>
+    <div class="grad-row">
+      <p class="grad-label">linear-gradient (to right)</p>
+      <div class="swatch swatch-linear"></div>
+    </div>
+    <div class="grad-row">
+      <p class="grad-label">radial-gradient</p>
+      <div class="swatch swatch-radial"></div>
+    </div>
+    <div class="grad-row">
+      <p class="grad-label">conic-gradient</p>
+      <div class="swatch swatch-conic"></div>
+    </div>
+    <div class="grad-row">
+      <p class="grad-label">repeating-linear-gradient (45deg stripes)</p>
+      <div class="swatch swatch-rep"></div>
     </div>
   </div>
 

@@ -5,6 +5,8 @@
 #import <UIKit/UIKit.h>
 #import <simd/simd.h>
 #include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/DecorationTypes.h>
+#include <RmlUi/Core/MathTypes.h>
 
 // ---- Embedded Metal shader source -----------------------------------------------
 // Compiled at runtime via newLibraryWithSource: — avoids Xcode build phase issues.
@@ -52,6 +54,57 @@ fragment float4 rmlui_fragment_texture(VertexOut in         [[stage_in]],
 {
     return in.color * tex.sample(samp, in.texcoord);
 }
+
+// ---- Gradient shader -------------------------------------------------------------
+#define GRADIENT_MAX_STOPS        16
+#define GRADIENT_LINEAR           0
+#define GRADIENT_RADIAL           1
+#define GRADIENT_CONIC            2
+#define GRADIENT_REPEATING_LINEAR 3
+#define GRADIENT_REPEATING_RADIAL 4
+#define GRADIENT_REPEATING_CONIC  5
+
+struct GradientUniforms {
+    float4 stop_colors[GRADIENT_MAX_STOPS];    // 256 bytes  (offset 0)
+    float  stop_positions[GRADIENT_MAX_STOPS]; //  64 bytes  (offset 256)
+    float2 p;                                  //   8 bytes  (offset 320)
+    float2 v;                                  //   8 bytes  (offset 328)
+    int    func;                               //   4 bytes  (offset 336)
+    int    num_stops;                          //   4 bytes  (offset 340)
+    float2 _pad;                               //   8 bytes  (offset 344) → total 352
+};
+
+fragment float4 rmlui_fragment_gradient(VertexOut in [[stage_in]],
+                                        constant GradientUniforms& g [[buffer(2)]])
+{
+    float t = 0.0;
+
+    if (g.func == GRADIENT_LINEAR || g.func == GRADIENT_REPEATING_LINEAR) {
+        float2 v = g.v;
+        float dist_sq = dot(v, v);
+        float2 V = in.texcoord - g.p;
+        t = dot(v, V) / dist_sq;
+    } else if (g.func == GRADIENT_RADIAL || g.func == GRADIENT_REPEATING_RADIAL) {
+        float2 V = in.texcoord - g.p;
+        t = length(g.v * V);
+    } else if (g.func == GRADIENT_CONIC || g.func == GRADIENT_REPEATING_CONIC) {
+        float2x2 R = float2x2(g.v.x, -g.v.y, g.v.y, g.v.x);
+        float2 V = R * (in.texcoord - g.p);
+        t = 0.5 + atan2(-V.x, V.y) / (2.0 * M_PI_F);
+    }
+
+    if (g.func == GRADIENT_REPEATING_LINEAR || g.func == GRADIENT_REPEATING_RADIAL || g.func == GRADIENT_REPEATING_CONIC) {
+        float t0 = g.stop_positions[0];
+        float t1 = g.stop_positions[g.num_stops - 1];
+        t = t0 + fmod(t - t0, t1 - t0);
+    }
+
+    float4 color = g.stop_colors[0];
+    for (int i = 1; i < g.num_stops; i++)
+        color = mix(color, g.stop_colors[i], smoothstep(g.stop_positions[i-1], g.stop_positions[i], t));
+
+    return in.color * color;
+}
 )MSL";
 
 // ---- Internal data types --------------------------------------------------------
@@ -74,6 +127,31 @@ struct MetalTexture {
     int height;
 };
 
+// Gradient uniforms — layout must match GradientUniforms in the MSL shader exactly.
+#define MAX_GRADIENT_STOPS 16
+struct GradientUniforms {
+    simd_float4 stop_colors[MAX_GRADIENT_STOPS];    // offset   0, 256 bytes
+    float       stop_positions[MAX_GRADIENT_STOPS]; // offset 256,  64 bytes
+    simd_float2 p;                                  // offset 320,   8 bytes
+    simd_float2 v;                                  // offset 328,   8 bytes
+    int         func;                               // offset 336,   4 bytes
+    int         num_stops;                          // offset 340,   4 bytes
+    float       _pad[2];                            // offset 344,   8 bytes → total 352
+};
+
+enum class GradientFunc : int {
+    Linear          = 0,
+    Radial          = 1,
+    Conic           = 2,
+    RepeatingLinear = 3,
+    RepeatingRadial = 4,
+    RepeatingConic  = 5,
+};
+
+struct CompiledShader_Metal {
+    GradientUniforms uniforms = {};
+};
+
 // ---- Renderer private data -------------------------------------------------------
 
 struct RenderInterface_Metal::Data {
@@ -83,6 +161,7 @@ struct RenderInterface_Metal::Data {
     id<MTLRenderPipelineState> pipeline_color;    // untextured, color writes enabled
     id<MTLRenderPipelineState> pipeline_texture;  // textured, color writes enabled
     id<MTLRenderPipelineState> pipeline_stencil;  // untextured, color writes disabled (stencil only)
+    id<MTLRenderPipelineState> pipeline_gradient; // gradient shader (linear/radial/conic)
     id<MTLSamplerState>        sampler;
 
     // Depth-stencil states
@@ -250,13 +329,15 @@ RenderInterface_Metal::RenderInterface_Metal(id<MTLDevice> device, MTKView* view
     MTLPixelFormat stencil_fmt = view.depthStencilPixelFormat;
     NSLog(@"[RmlUi] Building Metal pipelines (color=%lu stencil=%lu)",
           (unsigned long)color_fmt, (unsigned long)stencil_fmt);
-    m_data->pipeline_color   = BuildPipeline(device, library, @"rmlui_fragment_color",   color_fmt, stencil_fmt, YES);
-    m_data->pipeline_texture = BuildPipeline(device, library, @"rmlui_fragment_texture", color_fmt, stencil_fmt, YES);
-    m_data->pipeline_stencil = BuildPipeline(device, library, @"rmlui_fragment_color",   color_fmt, stencil_fmt, NO);
-    NSLog(@"[RmlUi] Pipelines: color=%s texture=%s stencil=%s",
-          m_data->pipeline_color   ? "OK" : "FAILED",
-          m_data->pipeline_texture ? "OK" : "FAILED",
-          m_data->pipeline_stencil ? "OK" : "FAILED");
+    m_data->pipeline_color    = BuildPipeline(device, library, @"rmlui_fragment_color",    color_fmt, stencil_fmt, YES);
+    m_data->pipeline_texture  = BuildPipeline(device, library, @"rmlui_fragment_texture",  color_fmt, stencil_fmt, YES);
+    m_data->pipeline_stencil  = BuildPipeline(device, library, @"rmlui_fragment_color",    color_fmt, stencil_fmt, NO);
+    m_data->pipeline_gradient = BuildPipeline(device, library, @"rmlui_fragment_gradient", color_fmt, stencil_fmt, YES);
+    NSLog(@"[RmlUi] Pipelines: color=%s texture=%s stencil=%s gradient=%s",
+          m_data->pipeline_color    ? "OK" : "FAILED",
+          m_data->pipeline_texture  ? "OK" : "FAILED",
+          m_data->pipeline_stencil  ? "OK" : "FAILED",
+          m_data->pipeline_gradient ? "OK" : "FAILED");
 
     // Depth-stencil states
     m_data->dss_normal     = BuildDSS(device, MTLCompareFunctionAlways, MTLStencilOperationKeep,           0);
@@ -672,4 +753,101 @@ void RenderInterface_Metal::SetTransform(const Rml::Matrix4f* transform)
         m_data->transform     = Rml::Matrix4f::Identity();
         m_data->has_transform = false;
     }
+}
+
+// ---- Shader (gradient) -----------------------------------------------------------
+
+Rml::CompiledShaderHandle RenderInterface_Metal::CompileShader(const Rml::String& name,
+                                                                const Rml::Dictionary& parameters)
+{
+    auto* shader = new CompiledShader_Metal();
+    GradientUniforms& g = shader->uniforms;
+
+    // Parse the color stop list (common to all gradient types)
+    auto load_stops = [&]() {
+        auto it = parameters.find("color_stop_list");
+        if (it == parameters.end()) return;
+        const auto& stop_list = it->second.GetReference<Rml::ColorStopList>();
+        g.num_stops = Rml::Math::Min((int)stop_list.size(), MAX_GRADIENT_STOPS);
+        for (int i = 0; i < g.num_stops; i++) {
+            const Rml::ColourbPremultiplied& c = stop_list[i].color;
+            g.stop_colors[i] = {c[0]/255.f, c[1]/255.f, c[2]/255.f, c[3]/255.f};
+            g.stop_positions[i] = stop_list[i].position.number;
+        }
+    };
+
+    if (name == "linear-gradient") {
+        const bool rep = Rml::Get(parameters, "repeating", false);
+        g.func = (int)(rep ? GradientFunc::RepeatingLinear : GradientFunc::Linear);
+        Rml::Vector2f p0 = Rml::Get(parameters, "p0", Rml::Vector2f(0.f));
+        Rml::Vector2f p1 = Rml::Get(parameters, "p1", Rml::Vector2f(0.f));
+        g.p = {p0.x, p0.y};
+        g.v = {p1.x - p0.x, p1.y - p0.y};
+        load_stops();
+    }
+    else if (name == "radial-gradient") {
+        const bool rep = Rml::Get(parameters, "repeating", false);
+        g.func = (int)(rep ? GradientFunc::RepeatingRadial : GradientFunc::Radial);
+        Rml::Vector2f center = Rml::Get(parameters, "center", Rml::Vector2f(0.f));
+        Rml::Vector2f radius = Rml::Get(parameters, "radius", Rml::Vector2f(1.f));
+        g.p = {center.x, center.y};
+        g.v = {1.f / radius.x, 1.f / radius.y};  // inverse radius, same as GL3
+        load_stops();
+    }
+    else if (name == "conic-gradient") {
+        const bool rep = Rml::Get(parameters, "repeating", false);
+        g.func = (int)(rep ? GradientFunc::RepeatingConic : GradientFunc::Conic);
+        Rml::Vector2f center = Rml::Get(parameters, "center", Rml::Vector2f(0.f));
+        float angle = Rml::Get(parameters, "angle", 0.f);
+        g.p = {center.x, center.y};
+        g.v = {Rml::Math::Cos(angle), Rml::Math::Sin(angle)};
+        load_stops();
+    }
+    else {
+        Rml::Log::Message(Rml::Log::LT_WARNING, "RmlUi Metal: unsupported shader '%s'", name.c_str());
+        delete shader;
+        return {};
+    }
+
+    return reinterpret_cast<Rml::CompiledShaderHandle>(shader);
+}
+
+void RenderInterface_Metal::RenderShader(Rml::CompiledShaderHandle shader_handle,
+                                          Rml::CompiledGeometryHandle geometry_handle,
+                                          Rml::Vector2f translation,
+                                          Rml::TextureHandle /*texture*/)
+{
+    if (!m_data || !m_data->current_encoder || !shader_handle || !geometry_handle) return;
+    if (!m_data->pipeline_gradient) return;
+
+    auto* shader = reinterpret_cast<CompiledShader_Metal*>(shader_handle);
+    auto* geo    = reinterpret_cast<MetalGeometry*>(geometry_handle);
+    id<MTLRenderCommandEncoder> enc = m_data->current_encoder;
+
+    [enc setDepthStencilState:m_data->active_dss];
+    [enc setStencilReferenceValue:m_data->active_stencil_ref];
+    [enc setRenderPipelineState:m_data->pipeline_gradient];
+
+    Uniforms u;
+    simd_float4x4 proj = OrthoMatrix((float)m_data->viewport_width, (float)m_data->viewport_height);
+    u.transform   = m_data->has_transform ? simd_mul(proj, RmlMatrixToSimd(m_data->transform)) : proj;
+    u.translation = {translation.x, translation.y};
+    u._padding    = {0.f, 0.f};
+
+    [enc setVertexBuffer:geo->vertex_buffer offset:0 atIndex:0];
+    [enc setVertexBytes:&u length:sizeof(u) atIndex:1];
+
+    // Gradient uniforms in fragment buffer(2)
+    [enc setFragmentBytes:&shader->uniforms length:sizeof(GradientUniforms) atIndex:2];
+
+    [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                    indexCount:geo->index_count
+                     indexType:MTLIndexTypeUInt32
+                   indexBuffer:geo->index_buffer
+             indexBufferOffset:0];
+}
+
+void RenderInterface_Metal::ReleaseShader(Rml::CompiledShaderHandle handle)
+{
+    delete reinterpret_cast<CompiledShader_Metal*>(handle);
 }
