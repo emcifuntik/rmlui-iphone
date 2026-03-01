@@ -6,7 +6,7 @@
 #import <simd/simd.h>
 #include <RmlUi/Core/Core.h>
 #include <RmlUi/Core/DecorationTypes.h>
-#include <RmlUi/Core/MathTypes.h>
+#include <RmlUi/Core/Math.h>
 
 // ---- Embedded Metal shader source -----------------------------------------------
 // Compiled at runtime via newLibraryWithSource: — avoids Xcode build phase issues.
