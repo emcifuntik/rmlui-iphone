@@ -1,0 +1,85 @@
+<rml>
+<head>
+  <title>RmlUi iPhone Demo</title>
+  <style>
+    /* RmlUi does not apply browser defaults — block elements must be explicit */
+    body, h1, p, div { display: block; }
+
+    body {
+      font-family: LatoLatin;
+      font-size: 18dp;
+      color: #e0e0e0;
+      background-color: #1a1a2e;
+      box-sizing: border-box;
+      padding: 24dp;
+      padding-top: 64dp;   /* clear Dynamic Island / status bar */
+      width: 100%;
+      min-height: 100%;
+    }
+    h1 {
+      font-size: 32dp;
+      color: #e94560;
+      margin-bottom: 8dp;
+    }
+    .subtitle {
+      font-size: 16dp;
+      color: #8899aa;
+      margin-bottom: 20dp;
+    }
+    .card {
+      background-color: #16213e;
+      border: 2dp #0f3460;
+      border-radius: 10dp;
+      padding: 20dp;
+      margin-bottom: 20dp;
+    }
+    .card-title {
+      font-size: 16dp;
+      color: #8899aa;
+      margin-bottom: 10dp;
+    }
+    .feature {
+      font-size: 17dp;
+      margin-bottom: 6dp;
+    }
+    .ok  { color: #4caf50; }
+    .tag {
+      font-size: 13dp;
+      color: #aabbcc;
+      margin-bottom: 4dp;
+    }
+    button {
+      background-color: #e94560;
+      color: #ffffff;
+      font-size: 18dp;
+      padding: 14dp 32dp;
+      border-radius: 8dp;
+      decorator: none;
+      margin-top: 4dp;
+    }
+    button:hover { background-color: #c73652; }
+  </style>
+</head>
+<body>
+  <h1>RmlUi on iPhone</h1>
+  <p class="subtitle">Metal renderer — custom iOS backend</p>
+
+  <div class="card">
+    <p class="card-title">RENDERER FEATURES</p>
+    <p class="feature"><span class="ok">[OK]</span> Colored geometry</p>
+    <p class="feature"><span class="ok">[OK]</span> Textured geometry + fonts</p>
+    <p class="feature"><span class="ok">[OK]</span> Scissor clipping</p>
+    <p class="feature"><span class="ok">[OK]</span> CSS transforms</p>
+    <p class="feature"><span class="ok">[OK]</span> Touch input</p>
+  </div>
+
+  <div class="card">
+    <p class="card-title">STACK</p>
+    <p class="tag">RmlUi 6.3  +  Metal  +  FreeType</p>
+    <p class="tag">MTLRenderCommandEncoder</p>
+    <p class="tag">vcpkg  +  CMake  +  Xcode</p>
+  </div>
+
+  <button onclick="body:style.background-color = #2e1a1a;">Tap me!</button>
+</body>
+</rml>
