@@ -52,6 +52,11 @@ public:
     void EnableScissorRegion(bool enable) override;
     void SetScissorRegion(Rml::Rectanglei region) override;
 
+    void EnableClipMask(bool enable) override;
+    void RenderToClipMask(Rml::ClipMaskOperation operation,
+                          Rml::CompiledGeometryHandle geometry,
+                          Rml::Vector2f translation) override;
+
     void SetTransform(const Rml::Matrix4f* transform) override;
 
 private:

@@ -43,6 +43,19 @@
       margin-bottom: 6dp;
     }
     .ok  { color: #4caf50; }
+    /* Clip mask demo */
+    .clip-box {
+      background-color: #0f3460;
+      border-radius: 24dp;
+      overflow: hidden;
+      height: 64dp;
+      width: 100%;
+    }
+    .clip-inner {
+      background-color: #e94560;
+      width: 50%;
+      height: 120dp;   /* intentionally taller — clipped by rounded boundary */
+    }
     .tag {
       font-size: 13dp;
       color: #aabbcc;
@@ -71,6 +84,13 @@
     <p class="feature"><span class="ok">[OK]</span> Scissor clipping</p>
     <p class="feature"><span class="ok">[OK]</span> CSS transforms</p>
     <p class="feature"><span class="ok">[OK]</span> Touch input</p>
+  </div>
+
+  <div class="card">
+    <p class="card-title">STENCIL CLIP MASK</p>
+    <div class="clip-box">
+      <div class="clip-inner"></div>
+    </div>
   </div>
 
   <div class="card">

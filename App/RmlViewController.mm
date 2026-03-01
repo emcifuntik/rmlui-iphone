@@ -34,9 +34,11 @@ static Rml::Vector2f TouchPoint(UITouch* touch, UIView* view)
 {
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
     _view = [[MTKView alloc] initWithFrame:UIScreen.mainScreen.bounds device:device];
-    _view.colorPixelFormat     = MTLPixelFormatBGRA8Unorm;
-    _view.clearColor           = MTLClearColorMake(0.1, 0.1, 0.15, 1.0);
-    _view.delegate             = self;
+    _view.colorPixelFormat        = MTLPixelFormatBGRA8Unorm;
+    _view.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+    _view.clearColor              = MTLClearColorMake(0.1, 0.1, 0.15, 1.0);
+    _view.clearStencil            = 0;
+    _view.delegate                = self;
     _view.preferredFramesPerSecond = 60;
     self.view = _view;
 }

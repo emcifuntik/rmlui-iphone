@@ -80,9 +80,16 @@ struct RenderInterface_Metal::Data {
     id<MTLDevice>              device;
     id<MTLCommandQueue>        command_queue;
 
-    id<MTLRenderPipelineState> pipeline_color;    // untextured
-    id<MTLRenderPipelineState> pipeline_texture;  // textured
+    id<MTLRenderPipelineState> pipeline_color;    // untextured, color writes enabled
+    id<MTLRenderPipelineState> pipeline_texture;  // textured, color writes enabled
+    id<MTLRenderPipelineState> pipeline_stencil;  // untextured, color writes disabled (stencil only)
     id<MTLSamplerState>        sampler;
+
+    // Depth-stencil states
+    id<MTLDepthStencilState>   dss_normal;       // no stencil test/write
+    id<MTLDepthStencilState>   dss_test;         // equal test, no write
+    id<MTLDepthStencilState>   dss_write;        // always pass, replace write
+    id<MTLDepthStencilState>   dss_write_incr;   // equal test, increment write (Intersect)
 
     id<MTLCommandBuffer>          current_command_buffer   = nil;
     id<MTLRenderCommandEncoder>   current_encoder          = nil;
@@ -96,7 +103,10 @@ struct RenderInterface_Metal::Data {
     Rml::Matrix4f transform;         // current model transform (identity = nullptr)
     bool has_transform = false;
 
-    Rml::Matrix4f projection;        // orthographic projection, recalculated on viewport change
+    // Clip mask state (stencil-based, incremented per layer to avoid clearing)
+    uint8_t  stencil_ref       = 0;
+    id<MTLDepthStencilState> active_dss;         // current DSS for RenderGeometry
+    uint32_t active_stencil_ref = 0;
 };
 
 // ---- Helper: build orthographic projection ---------------------------------------
@@ -129,7 +139,9 @@ static simd_float4x4 RmlMatrixToSimd(const Rml::Matrix4f& m)
 static id<MTLRenderPipelineState> BuildPipeline(id<MTLDevice> device,
                                                  id<MTLLibrary> library,
                                                  NSString* frag_name,
-                                                 MTLPixelFormat pixel_format)
+                                                 MTLPixelFormat color_format,
+                                                 MTLPixelFormat depth_stencil_format,
+                                                 BOOL write_color)
 {
     MTLRenderPipelineDescriptor* desc = [MTLRenderPipelineDescriptor new];
     desc.vertexFunction   = [library newFunctionWithName:@"rmlui_vertex"];
@@ -161,14 +173,25 @@ static id<MTLRenderPipelineState> BuildPipeline(id<MTLDevice> device,
     vd.layouts[0].stepFunction   = MTLVertexStepFunctionPerVertex;
     desc.vertexDescriptor = vd;
 
-    // Premultiplied alpha blending
+    // Stencil attachment format (must match MTKView.depthStencilPixelFormat)
+    if (depth_stencil_format != MTLPixelFormatInvalid) {
+        desc.depthAttachmentPixelFormat   = depth_stencil_format;
+        desc.stencilAttachmentPixelFormat = depth_stencil_format;
+    }
+
     MTLRenderPipelineColorAttachmentDescriptor* ca = desc.colorAttachments[0];
-    ca.pixelFormat                 = pixel_format;
-    ca.blendingEnabled             = YES;
-    ca.sourceRGBBlendFactor        = MTLBlendFactorOne;
-    ca.destinationRGBBlendFactor   = MTLBlendFactorOneMinusSourceAlpha;
-    ca.sourceAlphaBlendFactor      = MTLBlendFactorOne;
-    ca.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    ca.pixelFormat = color_format;
+    if (write_color) {
+        // Premultiplied alpha blending
+        ca.blendingEnabled             = YES;
+        ca.sourceRGBBlendFactor        = MTLBlendFactorOne;
+        ca.destinationRGBBlendFactor   = MTLBlendFactorOneMinusSourceAlpha;
+        ca.sourceAlphaBlendFactor      = MTLBlendFactorOne;
+        ca.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+    } else {
+        // Stencil-only pipeline: suppress all color output
+        ca.writeMask = MTLColorWriteMaskNone;
+    }
 
     NSError* error = nil;
     id<MTLRenderPipelineState> pso = [device newRenderPipelineStateWithDescriptor:desc error:&error];
@@ -176,6 +199,29 @@ static id<MTLRenderPipelineState> BuildPipeline(id<MTLDevice> device,
         Rml::Log::Message(Rml::Log::LT_ERROR, "Metal pipeline error: %s",
                           error.localizedDescription.UTF8String);
     return pso;
+}
+
+// ---- Build depth-stencil states -------------------------------------------------
+
+static id<MTLDepthStencilState> BuildDSS(id<MTLDevice> device,
+                                          MTLCompareFunction compare,
+                                          MTLStencilOperation pass_op,
+                                          uint32_t write_mask)
+{
+    MTLStencilDescriptor* s = [MTLStencilDescriptor new];
+    s.stencilCompareFunction    = compare;
+    s.stencilFailureOperation   = MTLStencilOperationKeep;
+    s.depthFailureOperation     = MTLStencilOperationKeep;
+    s.depthStencilPassOperation = pass_op;
+    s.readMask                  = 0xff;
+    s.writeMask                 = write_mask;
+
+    MTLDepthStencilDescriptor* dsd = [MTLDepthStencilDescriptor new];
+    dsd.depthCompareFunction = MTLCompareFunctionAlways;
+    dsd.depthWriteEnabled    = NO;
+    dsd.frontFaceStencil     = s;
+    dsd.backFaceStencil      = s;
+    return [device newDepthStencilStateWithDescriptor:dsd];
 }
 
 // ---- Constructor / Destructor ----------------------------------------------------
@@ -200,13 +246,24 @@ RenderInterface_Metal::RenderInterface_Metal(id<MTLDevice> device, MTKView* view
         return;
     }
 
-    MTLPixelFormat fmt = view.colorPixelFormat;
-    NSLog(@"[RmlUi] Building Metal pipelines for pixel format %lu", (unsigned long)fmt);
-    m_data->pipeline_color   = BuildPipeline(device, library, @"rmlui_fragment_color",   fmt);
-    m_data->pipeline_texture = BuildPipeline(device, library, @"rmlui_fragment_texture", fmt);
-    NSLog(@"[RmlUi] Pipelines: color=%s texture=%s",
+    MTLPixelFormat color_fmt   = view.colorPixelFormat;
+    MTLPixelFormat stencil_fmt = view.depthStencilPixelFormat;
+    NSLog(@"[RmlUi] Building Metal pipelines (color=%lu stencil=%lu)",
+          (unsigned long)color_fmt, (unsigned long)stencil_fmt);
+    m_data->pipeline_color   = BuildPipeline(device, library, @"rmlui_fragment_color",   color_fmt, stencil_fmt, YES);
+    m_data->pipeline_texture = BuildPipeline(device, library, @"rmlui_fragment_texture", color_fmt, stencil_fmt, YES);
+    m_data->pipeline_stencil = BuildPipeline(device, library, @"rmlui_fragment_color",   color_fmt, stencil_fmt, NO);
+    NSLog(@"[RmlUi] Pipelines: color=%s texture=%s stencil=%s",
           m_data->pipeline_color   ? "OK" : "FAILED",
-          m_data->pipeline_texture ? "OK" : "FAILED");
+          m_data->pipeline_texture ? "OK" : "FAILED",
+          m_data->pipeline_stencil ? "OK" : "FAILED");
+
+    // Depth-stencil states
+    m_data->dss_normal     = BuildDSS(device, MTLCompareFunctionAlways, MTLStencilOperationKeep,           0);
+    m_data->dss_test       = BuildDSS(device, MTLCompareFunctionEqual,  MTLStencilOperationKeep,           0);
+    m_data->dss_write      = BuildDSS(device, MTLCompareFunctionAlways, MTLStencilOperationReplace,     0xff);
+    m_data->dss_write_incr = BuildDSS(device, MTLCompareFunctionEqual,  MTLStencilOperationIncrementClamp, 0xff);
+    m_data->active_dss     = m_data->dss_normal;
 
     // Bilinear sampler
     MTLSamplerDescriptor* sd = [MTLSamplerDescriptor new];
@@ -256,6 +313,13 @@ void RenderInterface_Metal::BeginFrame(id<MTLCommandBuffer> command_buffer,
 
     m_data->has_transform = false;
     m_data->transform = Rml::Matrix4f::Identity();
+
+    // Reset stencil clip mask state for this frame
+    m_data->stencil_ref       = 0;
+    m_data->active_dss        = m_data->dss_normal;
+    m_data->active_stencil_ref = 0;
+    [m_data->current_encoder setDepthStencilState:m_data->dss_normal];
+    [m_data->current_encoder setStencilReferenceValue:0];
 }
 
 void RenderInterface_Metal::EndFrame()
@@ -304,6 +368,10 @@ void RenderInterface_Metal::RenderGeometry(Rml::CompiledGeometryHandle handle,
 
     auto* geo = reinterpret_cast<MetalGeometry*>(handle);
     id<MTLRenderCommandEncoder> enc = m_data->current_encoder;
+
+    // Apply current clip mask stencil state
+    [enc setDepthStencilState:m_data->active_dss];
+    [enc setStencilReferenceValue:m_data->active_stencil_ref];
 
     // Choose pipeline
     bool has_texture = (texture != 0);
@@ -452,6 +520,144 @@ void RenderInterface_Metal::SetScissorRegion(Rml::Rectanglei region)
 
     if (m_data->scissor_enabled && m_data->current_encoder)
         [m_data->current_encoder setScissorRect:m_data->scissor_rect];
+}
+
+// ---- Clip mask (stencil-based) ---------------------------------------------------
+//
+// Strategy: increment stencil_ref instead of clearing each frame.
+//   Set:       stencil_ref++; write stencil_ref where geometry (replace, test=always)
+//   Intersect: write stencil_ref where prev-layer pixels AND geometry (incr, test=equal(prev))
+//   SetInverse: stencil_ref++; fill viewport with stencil_ref, then punch out geometry with 0
+//
+// After each RenderToClipMask, active_stencil_ref is updated so RenderGeometry
+// tests == stencil_ref (passes only inside the clip region).
+
+void RenderInterface_Metal::EnableClipMask(bool enable)
+{
+    if (!m_data) return;
+    if (enable) {
+        m_data->active_dss         = m_data->dss_test;
+        m_data->active_stencil_ref = (uint32_t)m_data->stencil_ref;
+    } else {
+        m_data->active_dss         = m_data->dss_normal;
+        m_data->active_stencil_ref = 0;
+    }
+}
+
+/// Draw geometry to stencil without color output.
+static void EncodeStencilDraw(id<MTLRenderCommandEncoder> enc,
+                               MetalGeometry* geo,
+                               Rml::Vector2f translation,
+                               bool has_transform,
+                               const Rml::Matrix4f& transform,
+                               int vp_w, int vp_h,
+                               id<MTLRenderPipelineState> pipeline,
+                               id<MTLDepthStencilState> dss,
+                               uint32_t ref)
+{
+    [enc setRenderPipelineState:pipeline];
+    [enc setDepthStencilState:dss];
+    [enc setStencilReferenceValue:ref];
+
+    Uniforms u;
+    simd_float4x4 proj = OrthoMatrix((float)vp_w, (float)vp_h);
+    if (has_transform)
+        u.transform = simd_mul(proj, RmlMatrixToSimd(transform));
+    else
+        u.transform = proj;
+    u.translation = {translation.x, translation.y};
+    u._padding    = {0.0f, 0.0f};
+
+    [enc setVertexBuffer:geo->vertex_buffer offset:0 atIndex:0];
+    [enc setVertexBytes:&u length:sizeof(u) atIndex:1];
+    [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                    indexCount:geo->index_count
+                     indexType:MTLIndexTypeUInt32
+                   indexBuffer:geo->index_buffer
+             indexBufferOffset:0];
+}
+
+/// Fill the entire viewport with a given stencil reference value (for SetInverse).
+static void FillViewportStencil(id<MTLDevice> device,
+                                 id<MTLRenderCommandEncoder> enc,
+                                 id<MTLRenderPipelineState> pipeline,
+                                 id<MTLDepthStencilState> dss,
+                                 uint32_t ref, int vp_w, int vp_h)
+{
+    float w = (float)vp_w, h = (float)vp_h;
+    Rml::Vertex verts[4] = {
+        {{0,0}, {0,0,0,0}, {0,0}},
+        {{w,0}, {0,0,0,0}, {1,0}},
+        {{w,h}, {0,0,0,0}, {1,1}},
+        {{0,h}, {0,0,0,0}, {0,1}},
+    };
+    int idx[6] = {0,1,2, 0,2,3};
+
+    id<MTLBuffer> vbuf = [device newBufferWithBytes:verts length:sizeof(verts) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> ibuf = [device newBufferWithBytes:idx   length:sizeof(idx)   options:MTLResourceStorageModeShared];
+
+    [enc setRenderPipelineState:pipeline];
+    [enc setDepthStencilState:dss];
+    [enc setStencilReferenceValue:ref];
+
+    Uniforms u;
+    u.transform   = OrthoMatrix(w, h);
+    u.translation = {0.0f, 0.0f};
+    u._padding    = {0.0f, 0.0f};
+
+    [enc setVertexBuffer:vbuf offset:0 atIndex:0];
+    [enc setVertexBytes:&u length:sizeof(u) atIndex:1];
+    [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                    indexCount:6
+                     indexType:MTLIndexTypeUInt32
+                   indexBuffer:ibuf
+             indexBufferOffset:0];
+}
+
+void RenderInterface_Metal::RenderToClipMask(Rml::ClipMaskOperation operation,
+                                              Rml::CompiledGeometryHandle handle,
+                                              Rml::Vector2f translation)
+{
+    using Rml::ClipMaskOperation;
+    if (!m_data || !m_data->current_encoder || !handle) return;
+    if (!m_data->pipeline_stencil) return;
+
+    auto* geo = reinterpret_cast<MetalGeometry*>(handle);
+    id<MTLRenderCommandEncoder> enc = m_data->current_encoder;
+    const int w = m_data->viewport_width, h = m_data->viewport_height;
+
+    switch (operation) {
+    case ClipMaskOperation::Set:
+        m_data->stencil_ref++;
+        EncodeStencilDraw(enc, geo, translation,
+                          m_data->has_transform, m_data->transform, w, h,
+                          m_data->pipeline_stencil, m_data->dss_write,
+                          (uint32_t)m_data->stencil_ref);
+        break;
+
+    case ClipMaskOperation::SetInverse:
+        m_data->stencil_ref++;
+        // Fill viewport with stencil_ref, then punch geometry out with 0
+        FillViewportStencil(m_data->device, enc,
+                            m_data->pipeline_stencil, m_data->dss_write,
+                            (uint32_t)m_data->stencil_ref, w, h);
+        EncodeStencilDraw(enc, geo, translation,
+                          m_data->has_transform, m_data->transform, w, h,
+                          m_data->pipeline_stencil, m_data->dss_write, 0);
+        break;
+
+    case ClipMaskOperation::Intersect:
+        // Test equal to current ref, increment to ref+1 where geometry overlaps
+        EncodeStencilDraw(enc, geo, translation,
+                          m_data->has_transform, m_data->transform, w, h,
+                          m_data->pipeline_stencil, m_data->dss_write_incr,
+                          (uint32_t)m_data->stencil_ref);
+        m_data->stencil_ref++;
+        break;
+    }
+
+    // Update the active test reference so RenderGeometry clips to the new layer
+    m_data->active_stencil_ref = (uint32_t)m_data->stencil_ref;
 }
 
 // ---- Transform -------------------------------------------------------------------
