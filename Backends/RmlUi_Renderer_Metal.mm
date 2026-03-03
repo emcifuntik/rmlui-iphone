@@ -585,19 +585,27 @@ void RenderInterface_Metal::SetScissorRegion(Rml::Rectanglei region)
 {
     if (!m_data) return;
 
-    // Clamp to viewport bounds to avoid Metal validation errors
-    int x = Rml::Math::Max(region.Left(), 0);
-    int y = Rml::Math::Max(region.Top(), 0);
-    int w = Rml::Math::Max(region.Width(), 0);
-    int h = Rml::Math::Max(region.Height(), 0);
+    int vw = m_data->viewport_width;
+    int vh = m_data->viewport_height;
 
-    // Clamp right / bottom edges
-    w = Rml::Math::Min(x + w, m_data->viewport_width)  - x;
-    h = Rml::Math::Min(y + h, m_data->viewport_height) - y;
-    if (w <= 0) w = 1;
-    if (h <= 0) h = 1;
+    // Intersect region with [0, 0, vw, vh]
+    int x0 = Rml::Math::Max(region.Left(),   0);
+    int y0 = Rml::Math::Max(region.Top(),    0);
+    int x1 = Rml::Math::Min(region.Right(),  vw);
+    int y1 = Rml::Math::Min(region.Bottom(), vh);
 
-    m_data->scissor_rect = {(NSUInteger)x, (NSUInteger)y, (NSUInteger)w, (NSUInteger)h};
+    // Clamp origin to be strictly inside the viewport so x0+w and y0+h can never
+    // exceed the render-pass dimensions (Metal validation requirement).
+    x0 = Rml::Math::Min(x0, vw - 1);
+    y0 = Rml::Math::Min(y0, vh - 1);
+
+    // Width/height: at least 1px, at most reaching the far edge.
+    int w = Rml::Math::Max(x1 - x0, 1);
+    int h = Rml::Math::Max(y1 - y0, 1);
+    w = Rml::Math::Min(w, vw - x0);
+    h = Rml::Math::Min(h, vh - y0);
+
+    m_data->scissor_rect = {(NSUInteger)x0, (NSUInteger)y0, (NSUInteger)w, (NSUInteger)h};
 
     if (m_data->scissor_enabled && m_data->current_encoder)
         [m_data->current_encoder setScissorRect:m_data->scissor_rect];

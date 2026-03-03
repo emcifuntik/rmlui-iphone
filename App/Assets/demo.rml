@@ -1,141 +1,241 @@
 <rml>
 <head>
-  <title>RmlUi iPhone Demo</title>
+  <title>RmlUi Discord Demo</title>
   <style>
-    /* RmlUi does not apply browser defaults — block elements must be explicit */
-    body, h1, p, div { display: block; }
+    body, div, p, span, input { display: block; }
+    scrollbarvertical   { width: 0dp; }
+    scrollbarhorizontal { height: 0dp; }
 
     body {
       font-family: LatoLatin;
-      font-size: 18dp;
+      font-size: 14dp;
+      color: #e0e0e0;
+      background-color: #0a0a14;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      box-sizing: border-box;
+      padding: 0dp;
+      margin: 0dp;
+    }
+
+    /* Two-column flex layout */
+    #app {
+      display: flex;
+      flex-direction: row;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Guild Sidebar (72dp wide) ──────────────────────────── */
+    #guilds {
+      flex: 0 0 72dp;
+      height: 100%;
+      overflow-y: auto;
+      background-color: #0c0c18;
+      box-sizing: border-box;
+      padding-top: 56dp;
+      padding-bottom: 40dp;
+    }
+
+    .g-row {
+      display: block;
+      width: 72dp;
+      height: 60dp;
+    }
+
+    .g-icon {
+      display: block;
+      width: 48dp;
+      height: 48dp;
+      border-radius: 24dp;
+      margin-left: 12dp;
+      margin-top: 6dp;
+      text-align: center;
+      padding-top: 17dp;
+      box-sizing: border-box;
+      font-size: 13dp;
+      color: #ffffff;
+    }
+
+    .g-sep {
+      display: block;
+      width: 32dp;
+      height: 2dp;
+      margin-left: 20dp;
+      margin-top: 6dp;
+      margin-bottom: 6dp;
+      background-color: #2a2a4e;
+      border-radius: 1dp;
+    }
+
+    /* 8 guild background colors, cycling */
+    .g0 { background-color: #e94560; }
+    .g1 { background-color: #4caf50; }
+    .g2 { background-color: #2196f3; }
+    .g3 { background-color: #ff9800; }
+    .g4 { background-color: #9c27b0; }
+    .g5 { background-color: #00bcd4; }
+    .g6 { background-color: #ff5722; }
+    .g7 { background-color: #8bc34a; }
+
+    .g-home { background-color: #16213e; color: #e94560; }
+
+    /* ── Channel Panel (fills remaining width) ─────────────── */
+    #channels {
+      flex: 1;
+      height: 100%;
+      overflow-y: auto;
+      background-color: #12121f;
+      box-sizing: border-box;
+    }
+
+    #srv-header {
+      display: block;
+      padding: 66dp 16dp 12dp 16dp;
+      background-color: #0f0f1a;
+      font-size: 16dp;
+      color: #e0e0e0;
+    }
+
+    .h-sep {
+      display: block;
+      height: 1dp;
+      background-color: #2a2a4e;
+      margin-bottom: 4dp;
+    }
+
+    .search-box {
+      display: block;
+      margin: 8dp;
+      padding: 6dp 12dp;
+      background-color: #0a0a14;
+      border-radius: 4dp;
+      font-size: 14dp;
+      color: #8899aa;
+    }
+
+    .cat {
+      display: block;
+      padding: 14dp 8dp 4dp 16dp;
+      font-size: 11dp;
+      color: #8899aa;
+    }
+
+    .ch {
+      display: block;
+      padding: 8dp 8dp 8dp 16dp;
+      font-size: 15dp;
+      color: #8899aa;
+      border-radius: 4dp;
+      margin: 1dp 4dp;
+    }
+
+    .ch:hover { background-color: #1a1a2e; color: #c0c8d0; }
+
+    .ch-on {
+      display: block;
+      padding: 8dp 8dp 8dp 16dp;
+      font-size: 15dp;
       color: #e0e0e0;
       background-color: #1a1a2e;
-      box-sizing: border-box;
-      padding: 24dp;
-      padding-top: 64dp;   /* clear Dynamic Island / status bar */
-      width: 100%;
-      min-height: 100%;
+      border-radius: 4dp;
+      margin: 1dp 4dp;
     }
-    h1 {
-      font-size: 32dp;
-      color: #e94560;
-      margin-bottom: 8dp;
-    }
-    .subtitle {
-      font-size: 16dp;
-      color: #8899aa;
-      margin-bottom: 20dp;
-    }
-    .card {
-      background-color: #16213e;
-      border: 2dp #0f3460;
-      border-radius: 10dp;
-      padding: 20dp;
-      margin-bottom: 20dp;
-    }
-    .card-title {
-      font-size: 16dp;
-      color: #8899aa;
-      margin-bottom: 10dp;
-    }
-    .feature {
-      font-size: 17dp;
-      margin-bottom: 6dp;
-    }
-    .ok  { color: #4caf50; }
-    /* Clip mask demo */
-    .clip-box {
-      background-color: #0f3460;
-      border-radius: 24dp;
-      overflow: hidden;
-      height: 64dp;
-      width: 100%;
-    }
-    .clip-inner {
-      background-color: #e94560;
-      width: 50%;
-      height: 120dp;   /* intentionally taller — clipped by rounded boundary */
-    }
-    /* Gradient swatches */
-    .grad-row { margin-bottom: 10dp; }
-    .swatch {
-      height: 40dp;
-      border-radius: 6dp;
-      width: 100%;
-    }
-    .grad-label {
-      font-size: 13dp;
-      color: #8899aa;
-      margin-bottom: 4dp;
-    }
-    .swatch-linear   { decorator: linear-gradient(to right, #e94560, #0f3460); }
-    .swatch-radial   { decorator: radial-gradient(#ffe066, #e94560, #1a1a2e); }
-    .swatch-conic    { decorator: conic-gradient(#e94560, #ffe066, #4caf50, #0f3460, #e94560); }
-    .swatch-rep      { decorator: repeating-linear-gradient(45deg, #e94560, #e94560 8dp, #1a1a2e 8dp, #1a1a2e 16dp); }
-    .tag {
-      font-size: 13dp;
-      color: #aabbcc;
-      margin-bottom: 4dp;
-    }
-    button {
-      background-color: #e94560;
-      color: #ffffff;
-      font-size: 18dp;
-      padding: 14dp 32dp;
-      border-radius: 8dp;
-      decorator: none;
-      margin-top: 4dp;
-    }
-    button:hover { background-color: #c73652; }
+
+    .end-pad { display: block; height: 48dp; }
   </style>
 </head>
 <body>
-  <h1>RmlUi on iPhone</h1>
-  <p class="subtitle">Metal renderer — custom iOS backend</p>
+<div id="app">
 
-  <div class="card">
-    <p class="card-title">RENDERER FEATURES</p>
-    <p class="feature"><span class="ok">[OK]</span> Colored geometry</p>
-    <p class="feature"><span class="ok">[OK]</span> Textured geometry + fonts</p>
-    <p class="feature"><span class="ok">[OK]</span> Scissor clipping</p>
-    <p class="feature"><span class="ok">[OK]</span> CSS transforms</p>
-    <p class="feature"><span class="ok">[OK]</span> Touch input</p>
+  <!-- ── Guild Sidebar: Home + 40 guilds ── -->
+  <div id="guilds">
+    <div class="g-row"><div class="g-icon g-home">H</div></div>
+    <div class="g-sep"></div>
+    <div class="g-row"><div class="g-icon g0">Gm</div></div>
+    <div class="g-row"><div class="g-icon g1">Ms</div></div>
+    <div class="g-row"><div class="g-icon g2">Cd</div></div>
+    <div class="g-row"><div class="g-icon g3">Ar</div></div>
+    <div class="g-row"><div class="g-icon g4">Sc</div></div>
+    <div class="g-row"><div class="g-icon g5">Ge</div></div>
+    <div class="g-row"><div class="g-icon g6">Rp</div></div>
+    <div class="g-row"><div class="g-icon g7">Dv</div></div>
+    <div class="g-row"><div class="g-icon g0">Ds</div></div>
+    <div class="g-row"><div class="g-icon g1">Bk</div></div>
+    <div class="g-row"><div class="g-icon g2">Ft</div></div>
+    <div class="g-row"><div class="g-icon g3">Mn</div></div>
+    <div class="g-row"><div class="g-icon g4">Lg</div></div>
+    <div class="g-row"><div class="g-icon g5">Ph</div></div>
+    <div class="g-row"><div class="g-icon g6">St</div></div>
+    <div class="g-row"><div class="g-icon g7">Wr</div></div>
+    <div class="g-row"><div class="g-icon g0">Pk</div></div>
+    <div class="g-row"><div class="g-icon g1">Sp</div></div>
+    <div class="g-row"><div class="g-icon g2">Mt</div></div>
+    <div class="g-row"><div class="g-icon g3">Vd</div></div>
+    <div class="g-row"><div class="g-icon g4">Fn</div></div>
+    <div class="g-row"><div class="g-icon g5">Mu</div></div>
+    <div class="g-row"><div class="g-icon g6">Cv</div></div>
+    <div class="g-row"><div class="g-icon g7">Rl</div></div>
+    <div class="g-row"><div class="g-icon g0">Vg</div></div>
+    <div class="g-row"><div class="g-icon g1">Hk</div></div>
+    <div class="g-row"><div class="g-icon g2">Dk</div></div>
+    <div class="g-row"><div class="g-icon g3">Tl</div></div>
+    <div class="g-row"><div class="g-icon g4">Pl</div></div>
+    <div class="g-row"><div class="g-icon g5">Bl</div></div>
+    <div class="g-row"><div class="g-icon g6">Nr</div></div>
+    <div class="g-row"><div class="g-icon g7">Zm</div></div>
+    <div class="g-row"><div class="g-icon g0">Xe</div></div>
+    <div class="g-row"><div class="g-icon g1">Qt</div></div>
+    <div class="g-row"><div class="g-icon g2">Rf</div></div>
+    <div class="g-row"><div class="g-icon g3">Sm</div></div>
+    <div class="g-row"><div class="g-icon g4">Tx</div></div>
+    <div class="g-row"><div class="g-icon g5">UI</div></div>
+    <div class="g-row"><div class="g-icon g6">Nx</div></div>
+    <div class="g-row"><div class="g-icon g7">Ks</div></div>
+    <div class="end-pad"></div>
   </div>
 
-  <div class="card">
-    <p class="card-title">STENCIL CLIP MASK</p>
-    <div class="clip-box">
-      <div class="clip-inner"></div>
-    </div>
+  <!-- ── Channel Panel ── -->
+  <div id="channels">
+    <div id="srv-header">Dev Community</div>
+    <div class="h-sep"></div>
+    <input type="text" class="search-box" placeholder="Search" />
+
+    <div class="cat">INFORMATION</div>
+    <div class="ch"># rules</div>
+    <div class="ch"># announcements</div>
+    <div class="ch"># server-info</div>
+
+    <div class="cat">TEXT CHANNELS</div>
+    <div class="ch-on"># general</div>
+    <div class="ch"># tech-talk</div>
+    <div class="ch"># gaming</div>
+    <div class="ch"># media</div>
+    <div class="ch"># off-topic</div>
+    <div class="ch"># dev-chat</div>
+    <div class="ch"># rust-lang</div>
+    <div class="ch"># swift-ios</div>
+    <div class="ch"># web-dev</div>
+    <div class="ch"># data-science</div>
+    <div class="ch"># ai-ml</div>
+    <div class="ch"># security</div>
+    <div class="ch"># devops</div>
+    <div class="ch"># open-source</div>
+    <div class="ch"># databases</div>
+    <div class="ch"># mobile</div>
+
+    <div class="cat">COMMUNITY</div>
+    <div class="ch"># introductions</div>
+    <div class="ch"># show-and-tell</div>
+    <div class="ch"># feedback</div>
+    <div class="ch"># memes</div>
+    <div class="ch"># resources</div>
+    <div class="ch"># job-board</div>
+    <input type="text" class="search-box" placeholder="Search" />
+    <div class="end-pad"></div>
   </div>
 
-  <div class="card">
-    <p class="card-title">GRADIENTS</p>
-    <div class="grad-row">
-      <p class="grad-label">linear-gradient (to right)</p>
-      <div class="swatch swatch-linear"></div>
-    </div>
-    <div class="grad-row">
-      <p class="grad-label">radial-gradient</p>
-      <div class="swatch swatch-radial"></div>
-    </div>
-    <div class="grad-row">
-      <p class="grad-label">conic-gradient</p>
-      <div class="swatch swatch-conic"></div>
-    </div>
-    <div class="grad-row">
-      <p class="grad-label">repeating-linear-gradient (45deg stripes)</p>
-      <div class="swatch swatch-rep"></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <p class="card-title">STACK</p>
-    <p class="tag">RmlUi 6.3  +  Metal  +  FreeType</p>
-    <p class="tag">MTLRenderCommandEncoder</p>
-    <p class="tag">vcpkg  +  CMake  +  Xcode</p>
-  </div>
-
-  <button onclick="body:style.background-color = #2e1a1a;">Tap me!</button>
+</div>
 </body>
 </rml>
